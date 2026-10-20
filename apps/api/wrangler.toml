@@ -1,0 +1,39 @@
+name = "all-ears"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# The Worker serves the built React app and the API from one origin.
+# Set APP_ORIGIN to the deployed origin after the first deploy, then redeploy.
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "all-ears"
+# Replace after: npx wrangler d1 create all-ears
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "AUDIO"
+bucket_name = "all-ears-audio"
+
+[ai]
+binding = "AI"
+
+[observability]
+enabled = true
+
+[triggers]
+crons = ["17 3 * * *"]
+
+[vars]
+APP_ORIGIN = "http://localhost:5173"
+# Optional: only called when OPENCODE_API_KEY is set as a secret.
+OPENCODE_BASE_URL = "https://opencode.ai"
+OPENCODE_MODEL = "deepseek-v4.1-flash-free"
+# Workers AI is tried first for short-answer grading.
+LLM_FALLBACK_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8-fast"

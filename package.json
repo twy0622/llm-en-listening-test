@@ -1,0 +1,23 @@
+{
+  "name": "all-ears",
+  "version": "2.0.0",
+  "private": true,
+  "description": "LLM-generated English listening exams on a single free Cloudflare deployment",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @listening/web",
+    "dev:api": "npm run dev --workspace @listening/api",
+    "dev:web": "npm run dev --workspace @listening/web",
+    "typecheck": "npm run typecheck --workspace @listening/api && npm run typecheck --workspace @listening/web",
+    "test": "npm run test --workspace @listening/api",
+    "deploy": "npm run build && npm run deploy --workspace @listening/api",
+    "db:migrate:local": "npm run db:migrate:local --workspace @listening/api",
+    "db:migrate": "npm run db:migrate --workspace @listening/api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

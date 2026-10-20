@@ -1,0 +1,36 @@
+[project]
+name = "listening-pipeline"
+version = "0.1.0"
+description = "Offline content factory for the All Ears listening exam"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "pydantic>=2.8",
+  "python-dotenv>=1.0",
+  "truststore>=0.10",
+  "numpy>=1.26",
+  "soundfile>=0.12",
+  "lameenc>=1.7",
+  "kokoro>=0.9.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+listening = "listening_pipeline.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/listening_pipeline"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
