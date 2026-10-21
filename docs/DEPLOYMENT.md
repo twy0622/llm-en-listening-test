@@ -145,12 +145,14 @@ Copy-Item .env.example .env
 # edit .env: set CF_ACCOUNT_ID + CF_API_TOKEN, or GEMINI_API_KEY
 listening generate --level B1 --accent mixed --count 1
 listening validate out/<test-id>
-listening publish out/<test-id> --api https://<worker-url> --token <ADMIN_TOKEN>
+listening review out/<test-id>
+listening publish out/<test-id> --require-review --api https://<worker-url> --token <ADMIN_TOKEN>
 ```
 
-The publish command imports `test.json` and the MP3s. The Worker independently
-validates the pack with Zod before writing D1 and R2. Then open the site and press
-**Start a listening test**.
+The publish command imports `test.json`, `review.json`, and the MP3s. The Worker
+independently validates the pack with Zod before writing D1 and R2, and rejects a
+published import that has not passed review. Then open the site and press
+**Begin a listening paper**.
 
 See [CONTENT.md](CONTENT.md) for provider setup, quality gates, and how to build a
 larger bank.
@@ -179,15 +181,23 @@ generation.
 
 - Admin page: `https://<worker-url>/admin`. Paste the `ADMIN_TOKEN`; it is kept
   in session storage for the tab.
-- `GET /api/admin/tests` lists papers, counts, and status.
+- `GET /api/admin/tests` lists papers, seasons, review status, archive state, and
+  attempt counts.
 - Publish/unpublish: `POST /api/admin/tests/:id/publish` with
   `{"published":true|false}`.
-- Delete: `DELETE /api/admin/tests/:id`. A paper with attempts is protected.
+- Archive/restore: `POST /api/admin/tests/:id/archive` with
+  `{"archived":true|false}`. Archived papers leave the learner rotation but keep
+  their history, scores, transcripts, and audio replay.
+- Delete: `DELETE /api/admin/tests/:id`. A paper with attempts is protected;
+  archive it instead. Deleting a paper without attempts removes its audio.
 - Import: `POST /api/admin/import` with a `TestPack` plus base64 audio. The
-  factory's `publish` command is the normal client.
+  factory's `publish --require-review` command is the normal client; the Worker
+  rejects a published import whose review status is not approved.
 - Replace an existing paper: `--replace`, only when it has no attempts. A replace
   deletes the old passages/questions and their audio first; do not use it on a
   paper people are actively taking.
+- Seasonal replacement: add a new quarter's packs, then archive last quarter's
+  papers. Do not delete papers that have attempts.
 
 ### Backups
 
@@ -249,7 +259,8 @@ continues. There is no runtime TTS and no always-on server.
 ### `No published tests are available yet`
 
 Expected on a fresh deployment. Generate a pack and publish it. Check
-`/api/admin/tests` to confirm that the test status is `published`, not `draft`.
+`/api/admin/tests` to confirm that the test status is `published`, not
+`archived`, and that the review status is `approved`.
 
 ### Audio returns `404`
 

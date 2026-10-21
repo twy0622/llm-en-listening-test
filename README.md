@@ -1,23 +1,42 @@
 # All Ears
 
-A free, single-place English listening exam. Each paper has a monologue and a
-conversation, ten questions, a ten-minute timer, and two plays of each recording
-with a thirty-second break between them.
+A free, single-place English listening practice library. Each paper has a
+monologue and a conversation, ten questions, a ten-minute timer, and two plays of
+each recording with a thirty-second break between them.
 
-The browser app, API, exam bank, and audio all live on one Cloudflare Worker:
+The browser app, API, item bank, and audio all live on one Cloudflare Worker:
 React + Vite on the front, Hono on the back, D1 for the bank and history, R2 for
-MP3s, and Workers AI for optional short-answer grading. Content is generated and
-narrated offline with a Python factory, then imported through an admin endpoint.
-There are no accounts, no per-request text-to-speech, and no server to keep
-warm.
+MP3s, and Workers AI for the only optional model call — ambiguous short answers.
+Papers are written, narrated, checked, and reviewed offline in a Python factory,
+then imported through an admin endpoint. There are no accounts, no per-request
+text-to-speech, and no server to keep warm.
 
 > **No content ships in this repository.** A new deployment is intentionally
-> empty. Generate and publish at least one paper with the content factory before
-> learners arrive; the exam page tells the operator what to do until then.
+> empty. Generate, review, and publish at least one paper with the content
+> factory before learners arrive; the exam page tells the operator what to do
+> until then.
+
+## How the bank works
+
+- Papers are pre-generated and reused across learners. They are not invented at
+  request time.
+- A device is not shown a paper it has already submitted while another paper is
+  available. When the shelf is exhausted, it can serve a repeat rather than an
+  empty screen.
+- Every imported pack belongs to a quarterly season (`YYYY-Q1..Q4`) or to the
+  evergreen core. Selection prefers the current season, so the front of the
+  library changes four times a year without deleting old courses.
+- Old papers are **archived, not deleted**. Archived papers leave the learner
+  rotation, but existing attempts, scores, transcripts, and audio replay remain.
+- A pack can carry an offline `review.json` verdict. Publishing with
+  `--require-review` refuses to release a pack that has not been approved by
+  that offline editorial review.
+- Answers stay server-side. A learner cannot inspect keys, explanations, or
+  transcripts before submitting.
 
 ## What is implemented
 
-- Two-section exam papers: one monologue and one dialogue, five questions each
+- Two-section papers: one monologue and one dialogue, five questions each
   (2 MCQ, 2 gap-fill, 1 short answer).
 - Ten-minute server-checked deadline, with a 60-second network grace window.
 - Audio is played twice with a 30-second gap. The gate is client-side; the
@@ -25,16 +44,17 @@ warm.
 - Answers, explanations, rubrics, and transcripts stay in D1 until submission.
 - Anonymous, HMAC-signed device and attempt tokens. Device identity survives a
   browser restart; attempts are resumable and idempotent.
-- Exact grading for MCQ and gap-fill; Workers AI + deterministic keyword
-  fallback for short answers.
+- Exact grading for MCQ and gap-fill. Short answers are triaged deterministically
+  first; Workers AI is only called for genuinely ambiguous answers, with a keyword
+  fallback.
 - Results with transcripts, answer keys, per-question feedback, and a skill
   profile. History and a simple recommended level come from the same data.
+- Seasonal selection, archive/restore, and review status on the admin page.
 - Two independent pack validators: Pydantic in the factory and Zod in the Worker.
 - Topic engine with structured scenario cards and SHA-256 fingerprints so the
   factory does not repeat situations.
 - Offline Kokoro narration with one cached pipeline per language, encoded to
   64 kbps mono MP3.
-- Admin page for listing, publishing, unpublishing, and deleting papers.
 - D1 rate limiting and a daily cron cleanup.
 
 ## Repository layout
@@ -78,20 +98,21 @@ Open `http://localhost:8787` (or `http://localhost:5173`). The exam page will sa
 that no papers are available until you import one. The local D1 and R2 state is
 under `apps/api/.wrangler/` and is gitignored.
 
-To get a paper into the local bank, follow [docs/CONTENT.md](docs/CONTENT.md).
-The short version is:
+To get a reviewed paper into the local bank:
 
 ```powershell
 cd pipeline
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-Copy-Item .env.example .env       # add a Workers AI or Gemini credential
+Copy-Item .env.example .env        # add a Workers AI or Gemini credential
 listening generate --level B1 --accent mixed --count 1
-listening publish out/<test-id> --api http://localhost:8787 --token dev-admin-token
+listening validate out/<test-id>
+listening review out/<test-id>
+listening publish out/<test-id> --require-review --api http://localhost:8787 --token dev-admin-token
 ```
 
-Then reload the home page and press **Start a listening test**.
+Then reload the home page and press **Begin a listening paper**.
 
 ## Deployment
 
@@ -114,20 +135,24 @@ Set `APP_ORIGIN` in `apps/api/wrangler.toml` to the deployed origin (for example
 to the deployed Worker with `listening publish ... --api https://<worker-url>` and
 the same `ADMIN_TOKEN`.
 
-### About the LLM providers
+### About the model providers
 
 OpenCode's hosted free tier is deliberately app-only. In testing it returns
-`403 FreeTierError` to external scripts and Workers, so the deployed app does
-**not** depend on it. The runtime grading chain is:
+`403 FreeTierError` to external scripts and Workers, so bearing part of the app
+does **not** depend on it. The runtime grading chain is:
 
-1. Workers AI (free in-account allowance),
-2. OpenCode, only if `OPENCODE_API_KEY` is configured,
-3. a deterministic keyword heuristic.
+1. deterministic triage for clear/gap-fill/short answers and earlier full/zero short answers,
+   exact grading is done. Clear short answers are marked without a model,
+2. Workers AI (free in-account allowance) for genuinely ambiguous short answers,
+2. Workers AI (free in-account allowance) for genuinely ambiguous short answers,
+3. OpenCode, only if `OPENCODE_API_KEY` is configured,
+4. a deterministic keyword heuristic.
 
-The offline factory uses Workers AI REST or Gemini. Set one of those in
-`pipeline/.env`; OpenCode remains an opt-in last resort for accounts with a
-usable paid key. The app still grades MCQs and gap-fill without any LLM, and
-falls back to the heuristic for short answers if Workers AI is unavailable.
+The offline writer uses Workers AI REST or Gemini. The offline reviewer should use
+a different model family from the writer, so the second set of eyes is genuinely
+different. OpenCode remains an opt-in last resort for accounts with a usable
+paid key. The app still grades MCQs and gap-fill without any LLM, and falls back
+to the heuristic for short answers if Workers AI is unavailable.
 
 ## Tests
 
@@ -150,13 +175,15 @@ provider request shaping, and JSON extraction.
 - Workers: 100,000 requests/day.
 - Workers AI: 10,000 neurons/day (grading only; content generation is offline).
 - D1: 5 GB total, with a single primary database.
-- R2: 10 GB storage; audio is immutable and cached for a year.
+- R2: 10 GB storage; audio is immutable and cached for a year. 500 papers at
+  ~4 minutes/passage and 64 kbps is about 2 GB, so audio does not need proactive
+  deletion until far beyond the initial bank.
 - 500 Worker builds/month; a single deploy is one build.
 
 Workers AI is best-effort. Short-answer grading can fall back to the keyword
 heuristic, so the exam remains usable when the daily allowance is exhausted.
 There is no SLA on free model output quality; publish only packs that pass the
-factory's validators.
+factory's validators and offline review.
 
 ## Security and integrity
 
@@ -170,6 +197,8 @@ factory's validators.
   start/submit. Admin routes use a constant-time token comparison.
 - Audio keys must live under `audio/<testId>/`; admin imports cap the payload
   and decoded audio size.
+- A paper with attempts cannot be deleted. Archive it instead so history and
+  audio replay keep working.
 - Play-count enforcement is a study affordance, not proctoring. A determined
   learner can reset local state or create another device. This is not suitable
   for high-stakes certification.
@@ -181,6 +210,8 @@ factory's validators.
   is a simple rolling score heuristic.
 - No teacher dashboard or PDF/CSV export yet. The admin endpoints are the
   machine interface.
+- No human-signed sign-off workflow in the UI; the review verdict is produced
+  offline and lines in `review.json`, while the admin page can archive/unpublish.
 - Content is pre-generated. The Worker cannot run Torch or Kokoro.
 - The bank is empty until an operator publishes packs.
 

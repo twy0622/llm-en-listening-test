@@ -36,10 +36,13 @@ The browser stores it in `localStorage`. No account, cookie, or email is needed.
 The signature is HMAC-SHA-256 over a base64url payload with
 `ATTEMPT_SECRET`.
 
-`POST /api/tests/next` picks a published paper at the requested level (or the
-device's recommended level). A small-bank fallback serves any published paper if
-the requested/recommended level has none. The response contains only the public
-test shape: no transcript, answer, explanation, rubric, or gap-fill variant.
+`POST /api/tests/next` picks a published, non-archived paper at the requested
+level (or the device's recommended level). Papers the device has already
+submitted are excluded while others remain available; if the whole shelf has
+been seen, a repeat is served rather than an empty screen. Papers from the
+current UTC quarter are preferred over older seasons. The response contains only
+the public test shape: no transcript, answer, explanation, rubric, or gap-fill
+variant.
 
 `POST /api/attempts` creates the attempt, signs an attempt token
 `{k:"attempt", d, a, exp}`, and returns the public test again. The deadline is
@@ -90,7 +93,7 @@ CEFR assessment.
 
 | Table | Purpose | Notable constraints |
 |---|---|---|
-| `tests` | Paper metadata and publication state | `status` is `draft` or `published` |
+| `tests` | Paper metadata, season, review data, publication and archive state | `status` is `draft` or `published`; `archived_at` hides it from new attempts |
 | `passages` | Transcript, audio key, MIME, duration | unique `(test_id, position)` |
 | `questions` | Prompt, choices JSON, answer JSON, skill, points | answer is server-only |
 | `attempts` | Device, test, start, deadline, score | one row per exam session |
@@ -98,9 +101,10 @@ CEFR assessment.
 | `topics` | Imported scenario cards and fingerprints | unique fingerprint |
 | `rate_limits` | Fixed-window counters | keyed by route + IP hash |
 
-The D1 schema lives in `apps/api/migrations/0001_init.sql`. Migrations are
-forward-only. A test with attempts cannot be deleted or replaced; this preserves
-review links and foreign-key integrity.
+The D1 schema starts in `apps/api/migrations/0001_init.sql`; seasonal/archive
+columns are added in `0002_bank_lifecycle.sql`. Migrations are forward-only.
+A test with attempts cannot be deleted or replaced; archive it instead. This
+preserves review links, history, audio replay, and foreign-key integrity.
 
 ## Answer-exposure invariants
 
@@ -121,13 +125,18 @@ The public payload is deliberately a separate shape from the pack:
 ```text
 MCQ       ── exact key or normalised answer text ──▶ 1 or 0
 gap-fill  ── normalise(case, punctuation, quotes) ──▶ accepted or 0
-short     ── Workers AI JSON score ──▶ 1 / 0.5 / 0
-              │ failure or no binding
-              └── keyword coverage heuristic ──▶ 1 / 0.5 / 0
+short     ── deterministic keyword/rubric triage ──▶ 1 / 0.5 / 0   (clear cases)
+             │ ambiguous coverage
+             ▼
+          Workers AI JSON score ──▶ 1 / 0.5 / 0
+             │ failure or no binding
+             └── keyword coverage heuristic ──▶ 1 / 0.5 / 0
 ```
 
-Only short answers ever call an LLM. That keeps grading fast and cheap, and means
-the app remains usable with no model access at all.
+Only ambiguous short answers ever call an LLM. Very short answers, clear misses,
+and clear comprehension are marked deterministically first. That keeps grading
+fast and inexpensive, and means the app remains usable with no model access at
+all.
 
 The LLM prompt wraps the passage, question, expected answer, rubric, and learner
 response in separate tags and explicitly says the learner response is untrusted.
@@ -154,10 +163,13 @@ Pydantic model ── semantic validators (word counts, blanks, answers, banned 
 Kokoro (cached pipeline) ── PCM 24 kHz ── lameenc ── 64 kbps MP3
       │
       ▼
-test.json + audio/ ── `listening publish` ── Worker import
+test.json + audio/ ── offline editorial review (review.json)
       │
       ▼
-Zod TestPackSchema ── D1 batch + R2 objects ── published
+`listening publish --require-review` ── Worker import
+      │
+      ▼
+Zod TestPackSchema ── review/status gate ── D1 batch + R2 objects ── published
 ```
 
 The Worker re-validates every imported pack with the shared Zod contract. The
@@ -182,12 +194,13 @@ SLA. Workers AI exhaustion degrades only short-answer grading.
 
 | Symptom | Likely cause | Response |
 |---|---|---|
-| `No published tests are available yet` | Empty bank or only drafts | Generate and publish a pack |
+| `No published tests are available yet` | Empty bank, only drafts, or no eligible level/season | Generate and publish a pack; check archive state |
+| A learner never sees a paper again | They have submitted every eligible paper in the level | Expected; the bank needs growth, or selection serves a repeat after exhaustion |
 | Audio `404` | Wrong key prefix or missing R2 object | Re-publish; check `audio/<testId>/` |
 | Submission `410 deadline_expired` | More than 60 s past the server deadline | Start a new attempt |
 | Short answers graded `heuristic` | Workers AI unavailable or returned bad JSON | Expected fallback; no data loss |
 | `403` on a result | Different device token | Use the original browser profile |
-| Import `409` | Test exists / has attempts | Use a new pack or a draft without attempts |
+| Import `409` | Test exists / has attempts / review not approved | Use a new pack, archive, or fix review |
 | Import `413` | Base64 payload/audio too large | Shorten audio or split the pack |
 
 ## Why these choices
@@ -198,6 +211,12 @@ SLA. Workers AI exhaustion degrades only short-answer grading.
   objects are the natural fit; KV has different consistency and size economics.
 - **Pre-generated audio:** Workers cannot run Kokoro/Torch; request-time TTS
   would also be slow and fragile.
+- **Pre-generated papers, seasonal rotation, archive rather than delete:** the
+  product is a curated library, not a slot machine. Each paper costs offline
+  attention once and can then serve many learners; archive keeps history intact.
+- **Offline review gate:** an independent reviewer pass catches key errors and
+  "AI-sounding" writing before a pack reaches learners, while deterministic
+  validation still guards the wire contract.
 - **No accounts in V1:** signed device tokens remove signup friction while still
   protecting attempts and history. Accounts can be added later without changing
   the answer-exposure model.
