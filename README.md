@@ -165,10 +165,18 @@ cd pipeline
 python -m pytest -q
 ```
 
-The Worker tests cover answer normalisation, exact grading, and the promise that
-the pre-submission payload leaks no answers or transcripts. The Python tests
-cover scenario uniqueness, dialogue parsing, pack validation, prompt rendering,
-provider request shaping, and JSON extraction.
+The Worker tests cover answer normalisation, exact grading, short-answer
+triage (including the promise that clear answers never call a model), season
+boundaries, the promise that the pre-submission payload leaks no answers or
+transcripts, and paper selection. Selection tests run the real SQL against an
+in-memory SQLite database and cover unseen-paper preference, current-season
+preference, the cross-level fallback, archived/draft exclusion, and the
+exhaustion repeat. The Python tests cover scenario uniqueness, dialogue parsing,
+pack validation, prompt rendering, provider request shaping, JSON extraction,
+the offline review verdict, and the publish review gate.
+
+A GitHub Actions workflow runs the same typecheck, unit tests, SPA build, Worker
+bundle dry run, and Python tests on every push and pull request.
 
 ## Free-plan notes
 

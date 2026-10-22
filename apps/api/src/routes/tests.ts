@@ -1,52 +1,12 @@
 import { Hono } from "hono";
-import { LevelSchema, seasonForDate, type Level } from "@listening/shared";
+import { LevelSchema, type Level } from "@listening/shared";
 import type { AppEnv } from "../env";
 import { badRequest, notFound } from "../lib/errors";
 import { loadTestContent, recommendLevel, toPublicTest } from "../lib/exam";
 import { requireDevice } from "../lib/auth";
+import { pickTest } from "../lib/selection";
 
 const router = new Hono<AppEnv>();
-
-async function pickTest(
-  db: D1Database,
-  deviceId: string,
-  level: Level | null,
-): Promise<string | null> {
-  const season = seasonForDate();
-  const levelClause = level ? "AND level = ?" : "";
-  const baseParams: unknown[] = [];
-  if (level) baseParams.push(level);
-  baseParams.push(deviceId, season);
-
-  const withExclusion = await db
-    .prepare(
-      `SELECT id FROM tests
-        WHERE status = 'published' AND archived_at IS NULL ${levelClause}
-          AND id NOT IN (
-            SELECT test_id FROM attempts
-             WHERE device_id = ? AND status = 'submitted'
-          )
-        ORDER BY CASE WHEN season = ? THEN 0 ELSE 1 END, RANDOM()
-        LIMIT 1`,
-    )
-    .bind(...baseParams)
-    .first<{ id: string }>();
-
-  if (withExclusion) return withExclusion.id;
-
-  // Once a learner has seen the whole shelf, serve a repeat rather than an
-  // empty screen. Archived papers never re-enter the rotation.
-  const fallback = await db
-    .prepare(
-      `SELECT id FROM tests
-        WHERE status = 'published' AND archived_at IS NULL ${levelClause}
-        ORDER BY CASE WHEN season = ? THEN 0 ELSE 1 END, RANDOM()
-        LIMIT 1`,
-    )
-    .bind(...(level ? [level, season] : [season]))
-    .first<{ id: string }>();
-  return fallback?.id ?? null;
-}
 
 router.get("/next", requireDevice, async (c) => {
   const requested = c.req.query("level");
